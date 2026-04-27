@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ELEKTRA — Sistema Multi-Agente</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #080c0f;
+    --surface:  #0d1419;
+    --card:     #111820;
+    --border:   #1e2d3a;
+    --accent:   #00e5c0;
+    --accent2:  #0077ff;
+    --warn:     #ff6b2b;
+    --text:     #c8dce8;
+    --muted:    #4a6070;
+    --glow:     0 0 20px rgba(0,229,192,0.15);
+    --glow2:    0 0 40px rgba(0,229,192,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grain overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 9999; opacity: 0.6;
+  }
+
+  /* ── Layout ── */
+  .app { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 64px 1fr; height: 100vh; }
+
+  /* ── Header ── */
+  header {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: relative;
+  }
+  header::after {
+    content: '';
+    position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.4;
+  }
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800; font-size: 22px;
+    letter-spacing: 4px;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(0,229,192,0.5);
+  }
+  .logo span { color: var(--muted); font-weight: 400; font-size: 11px; letter-spacing: 2px; display: block; margin-top: -4px; }
+  .conn-status { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+  .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: all 0.3s; }
+  .conn-dot.connected { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse-dot 2s infinite; }
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Sidebar ── */
+  aside {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px 16px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .section-title {
+    font-size: 9px; letter-spacing: 3px; color: var(--muted);
+    text-transform: uppercase; padding: 0 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Agent cards */
+  .agent-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    position: relative; overflow: hidden;
+  }
+  .agent-card.thinking {
+    border-color: var(--accent);
+    box-shadow: var(--glow);
+    animation: thinking-pulse 1.5s infinite;
+  }
+  @keyframes thinking-pulse { 0%,100%{box-shadow:0 0 10px rgba(0,229,192,0.2)} 50%{box-shadow:0 0 25px rgba(0,229,192,0.4)} }
+  .agent-card.done { border-color: rgba(0,229,192,0.3); }
+  .agent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .agent-id { font-size: 10px; color: var(--accent); font-weight: 500; letter-spacing: 1px; }
+  .agent-model { font-size: 8px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+  .agent-role { font-size: 11px; color: var(--text); margin-bottom: 8px; }
+  .fitness-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .fitness-fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); border-radius: 2px; transition: width 0.8s cubic-bezier(0.4,0,0.2,1); }
+  .fitness-label { font-size: 9px; color: var(--muted); margin-top: 4px; display: flex; justify-content: space-between; }
+  .agent-status { position: absolute; top: 8px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .agent-card.thinking .agent-status { background: var(--accent); animation: pulse-dot 0.8s infinite; }
+  .agent-card.done .agent-status { background: var(--accent); }
+
+  /* Evolution log */
+  .evo-log {
+    font-size: 10px; color: var(--muted);
+    max-height: 140px; overflow-y: auto;
+    line-height: 1.7;
+  }
+  .evo-log .evo-line { padding: 1px 0; }
+  .evo-log .evo-line.elite { color: #ffd700; }
+  .evo-log .evo-line.mutation { color: var(--accent2); }
+  .evo-log .evo-line.crossover { color: var(--accent); }
+  .evo-log .evo-line.fitness { color: var(--text); }
+
+  /* ── Main area ── */
+  main {
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  /* Chat log */
+  .chat-log {
+    flex: 1; overflow-y: auto;
+    padding: 24px 32px;
+    display: flex; flex-direction: column; gap: 20px;
+    scroll-behavior: smooth;
+  }
+
+  /* Messages */
+  .msg {
+    max-width: 820px;
+    animation: fade-up 0.3s ease;
+  }
+  @keyframes fade-up { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+  .msg.user { align-self: flex-end; }
+  .msg.system { align-self: flex-start; }
+
+  .msg-bubble {
+    padding: 14px 18px;
+    border-radius: 12px;
+    font-size: 13px; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user .msg-bubble {
+    background: linear-gradient(135deg, #0a2540, #0d3060);
+    border: 1px solid rgba(0,119,255,0.3);
+    color: #b0d4ff;
+  }
+  .msg.system .msg-bubble {
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+  .msg.synthesis .msg-bubble {
+    background: linear-gradient(135deg, #041a14, #062420);
+    border: 1px solid rgba(0,229,192,0.25);
+    box-shadow: var(--glow2);
+  }
+  .msg-label {
+    font-size: 9px; letter-spacing: 2px; color: var(--muted);
+    margin-bottom: 6px; text-transform: uppercase;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .msg-label .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+
+  /* Agent response accordion */
+  .agent-responses { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .agent-resp {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+  .agent-resp-header {
+    padding: 8px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer;
+    font-size: 11px;
+    user-select: none;
+  }
+  .agent-resp-header:hover { background: rgba(0,229,192,0.04); }
+  .agent-resp-name { color: var(--accent); font-weight: 500; }
+  .agent-resp-model { color: var(--muted); font-size: 10px; }
+  .agent-resp-body {
+    padding: 12px 14px;
+    font-size: 12px; line-height: 1.7;
+    color: var(--text);
+    border-top: 1px solid var(--border);
+    white-space: pre-wrap;
+    display: none;
+  }
+  .agent-resp.open .agent-resp-body { display: block; }
+  .agent-resp-toggle { color: var(--muted); font-size: 14px; transition: transform 0.2s; }
+  .agent-resp.open .agent-resp-toggle { transform: rotate(90deg); }
+
+  /* Processing indicator */
+  .processing {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 18px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; font-size: 12px; color: var(--muted);
+    max-width: 400px;
+  }
+  .processing-dots span {
+    display: inline-block; width: 5px; height: 5px;
+    background: var(--accent); border-radius: 50%;
+    animation: dot-bounce 1.2s infinite;
+    margin: 0 2px;
+  }
+  .processing-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .processing-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dot-bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-6px)} }
+
+  /* Files preview */
+  .files-preview {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 8px 0;
+  }
+  .file-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 12px;
+    font-size: 11px; color: var(--text);
+  }
+  .file-chip .remove { cursor: pointer; color: var(--muted); margin-left: 4px; }
+  .file-chip .remove:hover { color: var(--warn); }
+
+  /* Image preview */
+  .img-preview { max-width: 200px; max-height: 140px; border-radius: 8px; border: 1px solid var(--border); }
+
+  /* ── Input area ── */
+  .input-area {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 16px 24px 20px;
+  }
+  .input-files { min-height: 0; }
+  .input-row {
+    display: flex; align-items: flex-end; gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px; padding: 10px 14px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .input-row:focus-within {
+    border-color: rgba(0,229,192,0.4);
+    box-shadow: 0 0 0 3px rgba(0,229,192,0.06);
+  }
+  textarea {
+    flex: 1; background: none; border: none; outline: none;
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; line-height: 1.6; resize: none;
+    min-height: 24px; max-height: 200px;
+  }
+  textarea::placeholder { color: var(--muted); }
+
+  .btn-icon {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); padding: 6px;
+    border-radius: 8px; transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .btn-icon:hover { color: var(--accent); background: rgba(0,229,192,0.08); }
+  .btn-icon.active { color: var(--warn); background: rgba(255,107,43,0.1); animation: pulse-dot 1s infinite; }
+  .btn-icon svg { width: 18px; height: 18px; }
+
+  .btn-send {
+    background: var(--accent); border: none; cursor: pointer;
+    color: var(--bg); padding: 8px 18px;
+    border-radius: 10px; font-family: 'Syne', sans-serif;
+    font-weight: 700; font-size: 13px; letter-spacing: 1px;
+    transition: all 0.2s; flex-shrink: 0;
+  }
+  .btn-send:hover { background: #00ffda; box-shadow: 0 0 16px rgba(0,229,192,0.4); }
+  .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .input-options {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px; padding: 0 4px;
+    font-size: 10px; color: var(--muted);
+  }
+  .gen-selector { display: flex; align-items: center; gap: 8px; }
+  .gen-selector label { font-size: 10px; color: var(--muted); }
+  .gen-btn {
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--muted); border-radius: 6px;
+    padding: 3px 10px; font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; cursor: pointer; transition: all 0.2s;
+  }
+  .gen-btn.active { background: rgba(0,229,192,0.1); border-color: var(--accent); color: var(--accent); }
+
+  /* Voice transcript */
+  .voice-transcript {
+    font-size: 11px; color: var(--accent); padding: 4px 0;
+    font-style: italic; min-height: 18px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* Generation badge */
+  .gen-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(0,229,192,0.06); border: 1px solid rgba(0,229,192,0.15);
+    border-radius: 20px; padding: 4px 12px;
+    font-size: 10px; color: var(--accent); letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  /* Hidden file input */
+  #file-input { display: none; }
+
+  /* Modal Settings */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: none; justify-content: center; align-items: center; z-index: 10000; backdrop-filter: blur(4px); }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 400px; max-width: 90%; }
+  .modal h3 { color: var(--accent); margin-bottom: 16px; font-family: 'Syne', sans-serif; }
+  .modal input { width: 100%; padding: 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; margin-bottom: 16px; font-family: 'JetBrains Mono', monospace; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .modal-btn { padding: 8px 16px; border-radius: 6px; cursor: pointer; border: none; font-weight: bold; }
+  .btn-cancel { background: var(--card); color: var(--text); }
+  .btn-save { background: var(--accent); color: var(--bg); }
+  
+  /* Select */
+  .agent-model-select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 9px; padding: 2px 4px; max-width: 120px; outline: none; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">ELEKTRA<span>SISTEMA MULTI-AGENTE EVOLUTIVO</span></div>
+    <div style="display:flex;align-items:center;gap:20px">
+      <button class="btn-icon" onclick="openSettings()" title="Configuración">⚙️</button>
+      <div class="conn-status">
+        <div class="conn-dot" id="conn-dot"></div>
+        <span id="conn-label">conectando...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <aside>
+    <div class="section-title" data-i18n="agents_title">Agentes activos</div>
+    <div id="agents-list">
+      <div style="font-size:11px;color:var(--muted);padding:8px 4px">Iniciando sistema...</div>
+    </div>
+
+    <div class="section-title" style="margin-top:8px" data-i18n="evo_title">Log evolutivo</div>
+    <div class="evo-log" id="evo-log">
+      <div class="evo-line" style="color:var(--muted)" data-i18n="waiting_run">— esperando primera ejecución —</div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main>
+    <div class="chat-log" id="chat-log">
+      <!-- Welcome -->
+      <div class="msg system">
+        <div class="msg-label"><div class="dot"></div>ELEKTRA</div>
+        <div class="msg-bubble">Hola. Me llamo Elektra.
+
+Soy un sistema de inteligencia colectiva formado por <strong style="color:var(--accent)">4 agentes especializados</strong> que colaboran y evolucionan para resolver problemas complejos.
+
+Puedes escribir tu problema, adjuntar archivos o imágenes, o hablar directamente por voz. Elegiré los mejores ángulos de análisis y sintetizaré una respuesta superior a la que cualquier agente individual podría darte.
+
+¿Empezamos?</div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div class="input-area">
+      <div class="input-files" id="files-preview"></div>
+      <div class="voice-transcript" id="voice-transcript"></div>
+
+      <div class="input-row">
+        <!-- File upload -->
+        <button class="btn-icon" title="Adjuntar archivo" onclick="document.getElementById('file-input').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input type="file" id="file-input" multiple accept="*/*" onchange="handleFiles(this.files)">
+
+        <!-- Voice -->
+        <button class="btn-icon" id="voice-btn" title="Hablar por voz" onclick="toggleVoice()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+        </button>
+
+        <textarea id="input-text" placeholder="Describe el problema a resolver..." data-i18n-ph="placeholder" rows="1"
+          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+
+        <button class="btn-send" id="send-btn" onclick="sendMessage()" data-i18n="send">ENVIAR</button>
+      </div>
+
+      <div class="input-options">
+        <div class="gen-selector">
+          <label data-i18n="generations">GENERACIONES:</label>
+          <button class="gen-btn" data-gen="1" onclick="setGen(1)">1</button>
+          <button class="gen-btn active" data-gen="3" onclick="setGen(3)">3</button>
+          <button class="gen-btn" data-gen="5" onclick="setGen(5)">5</button>
+        </div>
+        <span id="problems-count" style="color:var(--muted)">0 <span data-i18n="problems">problemas resueltos</span></span>
+      </div>
+    </div>
+  </main>
+</div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settings-modal">
+    <div class="modal">
+      <h3 data-i18n="settings_title">Configuración de API</h3>
+      <label style="font-size: 11px; color: var(--muted); display: block; margin-bottom: 8px;" data-i18n="api_key_label">Ollama API Key:</label>
+      <input type="password" id="api-key-input" placeholder="sk-..." />
+      <div class="modal-actions">
+        <button class="modal-btn btn-cancel" onclick="closeSettings()" data-i18n="cancel">Cancelar</button>
+        <button class="modal-btn btn-save" onclick="saveSettings()" data-i18n="save">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+
+<script>
+
+// ─── Estado ───────────────────────────────────
+let availableModels = [];
+const i18n = {
+  es: {
+    connecting: "conectando...", connected: "t('connected')", reconnecting: "t('reconnecting')",
+    agents_title: "Agentes activos", evo_title: "Log evolutivo",
+    problems: "problemas resueltos", generations: "GENERACIONES:",
+    send: "ENVIAR", settings_title: "Configuración de API", api_key_label: "API Key (Ollama/OpenAI):",
+    cancel: "Cancelar", save: "Guardar", thinking: "pensando...",
+    waiting_run: "— esperando primera ejecución —",
+    placeholder: "Describe el problema a resolver...",
+    start_msg: "Hola. Me llamo Elektra.\\n\\nSoy un sistema de inteligencia colectiva formado por 4 agentes..."
+  },
+  en: {
+    connecting: "connecting...", connected: "connected", reconnecting: "reconnecting...",
+    agents_title: "Active agents", evo_title: "Evolution log",
+    problems: "problems solved", generations: "GENERATIONS:",
+    send: "SEND", settings_title: "API Settings", api_key_label: "API Key (Ollama/OpenAI):",
+    cancel: "Cancel", save: "Save", thinking: "thinking...",
+    waiting_run: "— waiting for first run —",
+    placeholder: "Describe the problem to solve...",
+    start_msg: "Hello. I am Elektra.\\n\\nI'm a collective intelligence system..."
+  }
+};
+let lang = navigator.language.startsWith('es') ? 'es' : 'en';
+
+function t(key) { return i18n[lang][key] || key; }
+
+function applyTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  const textInput = document.getElementById('input-text');
+  if(textInput) textInput.placeholder = t('placeholder');
+  const conn = document.getElementById('conn-label');
+  if(conn && conn.textContent === 'conectando...') conn.textContent = t('connecting');
+}
+
+async function fetchModels() {
+  try {
+    const res = await fetch('/api/models');
+    availableModels = await res.json();
+  } catch (e) { console.error("Error fetching models", e); }
+}
+
+function openSettings() {
+  document.getElementById('settings-modal').classList.add('open');
+  fetch('/api/key').then(r=>r.json()).then(d => {
+    document.getElementById('api-key-input').placeholder = d.has_key ? d.preview : "sk-...";
+  });
+}
+function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
+async function saveSettings() {
+  const val = document.getElementById('api-key-input').value;
+  if(val) {
+    await fetch('/api/key', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key: val}) });
+  }
+  closeSettings();
+  setTimeout(() => window.location.reload(), 500);
+}
+
+function changeAgentModel(agent_id, new_model) {
+  if(ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'set_model', agent_id: agent_id, model: new_model }));
+  }
+}
+
+let ws = null;
+
+let isProcessing = false;
+let selectedGenerations = 3;
+let pendingFiles = [];       // [{name, type, base64, text, isImage}]
+let recognition = null;
+let isRecording = false;
+let processingMsgEl = null;
+let currentAgentResponses = {};
+
+// ─── WebSocket ────────────────────────────────
+function connect() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    setConn(true);
+    ws.send(JSON.stringify({ type: 'status' }));
+  };
+
+  ws.onclose = () => {
+    setConn(false);
+    setTimeout(connect, 3000);
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    handleMessage(data);
+  };
+}
+
+function setConn(ok) {
+  document.getElementById('conn-dot').className = 'conn-dot' + (ok ? ' connected' : '');
+  document.getElementById('conn-label').textContent = ok ? t('connected') : t('reconnecting');
+}
+
+// ─── Mensajes WebSocket ───────────────────────
+function handleMessage(data) {
+  switch (data.type) {
+
+    case 'status':
+      renderAgents(data.agents);
+      document.getElementById('problems-count').textContent =
+        `${data.problems_solved} problemas resueltos`;
+      break;
+
+    case 'start':
+      isProcessing = true;
+      currentAgentResponses = {};
+      document.getElementById('send-btn').disabled = true;
+      setAllAgentsIdle();
+      processingMsgEl = appendProcessing(`Generación 1/${data.generations} — iniciando agentes...`);
+      if (window.MathJax) MathJax.typesetPromise();
+      break;
+
+    case 'generation_start':
+      if (processingMsgEl) {
+          const textEl = processingMsgEl.querySelector('.processing-text');
+          if (textEl) textEl.textContent = `Generación ${data.gen}/${data.total} — ejecutando agentes...`;
+      }
+      appendEvoLine(`── Generación ${data.gen}/${data.total} ──`, '');
+      break;
+
+    case 'agent_thinking':
+      setAgentThinking(data.agent_id);
+      if (processingMsgEl) {
+          const textEl = processingMsgEl.querySelector('.processing-text');
+          if (textEl) textEl.textContent = `${data.role} pensando...`;
+      }
+      break;
+
+    case 'agent_done':
+      setAgentDone(data.agent_id, data.fitness);
+      currentAgentResponses[data.agent_id] = data.response;
+      break;
+
+    case 'evolving':
+      if (processingMsgEl) {
+          const textEl = processingMsgEl.querySelector('.processing-text');
+          if (textEl) textEl.textContent = 'Evaluando y evolucionando agentes...';
+      }
+      break;
+
+    case 'evolution_done':
+      renderAgents(data.agents);
+      data.log.forEach(line => {
+        const cls = line.includes('👑') ? 'elite'
+                  : line.includes('🔀') ? 'crossover'
+                  : line.includes('🔬') ? 'mutation'
+                  : line.includes('🧬') ? 'fitness' : '';
+        appendEvoLine(line, cls);
+      });
+      break;
+
+    case 'synthesizing':
+      if (processingMsgEl) {
+          const textEl = processingMsgEl.querySelector('.processing-text');
+          if (textEl) textEl.textContent = 'Sintetizando respuesta final...';
+      }
+      break;
+
+    case 'synthesis':
+      if (processingMsgEl) { processingMsgEl.remove(); processingMsgEl = null; }
+      appendSynthesis(data.text, data.agents);
+      isProcessing = false;
+      document.getElementById('send-btn').disabled = false;
+      if (window.MathJax) MathJax.typesetPromise();
+      ws.send(JSON.stringify({ type: 'status' }));
+      break;
+
+    case 'error':
+      if (processingMsgEl) { processingMsgEl.remove(); processingMsgEl = null; }
+      appendSystemMsg('❌ ' + data.message);
+      isProcessing = false;
+      document.getElementById('send-btn').disabled = false;
+      break;
+  }
+}
+
+// ─── Renderizado de agentes ───────────────────
+
+function renderAgents(agents) {
+  const container = document.getElementById('agents-list');
+  container.innerHTML = '';
+  agents.forEach(agent => {
+    const pct = Math.round(agent.fitness * 100);
+    
+    let modelSelector = `<span class="agent-model">${agent.model}</span>`;
+    if (availableModels.length > 0) {
+      let selectHtml = `<select class="agent-model-select" onchange="changeAgentModel('${agent.id}', this.value)" ${isProcessing ? 'disabled' : ''}>`;
+      availableModels.forEach(m => {
+        const selected = m.id === agent.model ? 'selected' : '';
+        selectHtml += `<option value="${m.id}" ${selected}>${m.id} (${m.tier_label})</option>`;
+      });
+      selectHtml += `</select>`;
+      modelSelector = selectHtml;
+    }
+
+    container.innerHTML += `
+      <div class="agent-card" id="card-${agent.id}">
+        <div class="agent-status"></div>
+        <div class="agent-header">
+          <span class="agent-id">${agent.id.replace('agente_','').toUpperCase()}</span>
+          ${modelSelector}
+        </div>
+        <div class="agent-role">${agent.role}</div>
+        <div class="fitness-bar"><div class="fitness-fill" style="width:${pct}%"></div></div>
+        <div class="fitness-label">
+          <span>fitness ${agent.fitness.toFixed(2)}</span>
+          <span>gen ${agent.generation} · mut ${agent.mutations}</span>
+        </div>
+      </div>`;
+  });
+}
+
+function setAgentThinking(id) {
+  const card = document.getElementById(`card-${id}`);
+  if (card) { card.classList.remove('done'); card.classList.add('thinking'); }
+}
+
+function setAgentDone(id, fitness) {
+  const card = document.getElementById(`card-${id}`);
+  if (card) {
+    card.classList.remove('thinking'); card.classList.add('done');
+    const fill = card.querySelector('.fitness-fill');
+    if (fill) fill.style.width = Math.round(fitness * 100) + '%';
+  }
+}
+
+function setAllAgentsIdle() {
+  document.querySelectorAll('.agent-card').forEach(c => {
+    c.classList.remove('thinking', 'done');
+  });
+}
+
+// ─── Chat ─────────────────────────────────────
+function appendMsg(role, html, extraClass = '') {
+  const log = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = `msg ${role} ${extraClass}`;
+  div.innerHTML = html;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+function appendUserMsg(text, files) {
+  let filesHtml = '';
+  if (files.length) {
+    filesHtml = '<div class="files-preview">' + files.map(f => {
+      if (f.isImage) return `<img class="img-preview" src="data:${f.type};base64,${f.base64}" title="${f.name}">`;
+      return `<div class="file-chip">📄 ${f.name}</div>`;
+    }).join('') + '</div>';
+  }
+  appendMsg('user', `
+    <div class="msg-label">TÚ</div>
+    <div class="msg-bubble">${filesHtml}${escHtml(text)}</div>`);
+}
+
+function appendProcessing(text) {
+  return appendMsg('system', `
+    <div class="msg-bubble processing">
+      <div class="processing-dots"><span></span><span></span><span></span></div>
+      <span class="processing-text">${text}</span>
+    </div>`);
+}
+
+function appendSystemMsg(text) {
+  appendMsg('system', `<div class="msg-bubble">${text}</div>`);
+}
+
+function appendSynthesis(text, agents) {
+  // Respuestas individuales (accordion)
+  const respHtml = Object.entries(currentAgentResponses).map(([id, resp]) => {
+    const agent = agents.find(a => a.id === id) || {};
+    return `
+      <div class="agent-resp" onclick="this.classList.toggle('open')">
+        <div class="agent-resp-header">
+          <div>
+            <span class="agent-resp-name">${id.replace('agente_','').toUpperCase()}</span>
+            <span class="agent-resp-model" style="margin-left:8px">${agent.model||''}</span>
+          </div>
+          <span class="agent-resp-toggle">›</span>
+        </div>
+        <div class="agent-resp-body">${escHtml(resp)}</div>
+      </div>`;
+  }).join('');
+
+  appendMsg('synthesis', `
+    <div class="msg-label"><div class="dot"></div>SÍNTESIS FINAL — ELEKTRA</div>
+    <div class="msg-bubble">${escHtml(text)}</div>
+    <div style="margin-top:12px">
+      <div style="font-size:9px;letter-spacing:2px;color:var(--muted);margin-bottom:8px">RESPUESTAS INDIVIDUALES (click para expandir)</div>
+      <div class="agent-responses">${respHtml}</div>
+    </div>`);
+}
+
+function appendEvoLine(text, cls) {
+  const log = document.getElementById('evo-log');
+  const div = document.createElement('div');
+  div.className = `evo-line ${cls}`;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ─── Envío ────────────────────────────────────
+async function sendMessage() {
+  if (isProcessing) return;
+  const textarea = document.getElementById('input-text');
+  const text = textarea.value.trim();
+  if (!text && pendingFiles.length === 0) return;
+
+  appendUserMsg(text || '(archivo adjunto)', pendingFiles);
+
+  // Enviar por WS
+  ws.send(JSON.stringify({
+    type: 'solve',
+    problem: text,
+    generations: selectedGenerations,
+    files: pendingFiles.map(f => ({ name: f.name, type: f.type, base64: f.base64, text: f.text })),
+  }));
+
+  textarea.value = '';
+  autoResize(textarea);
+  clearFiles();
+  document.getElementById('voice-transcript').textContent = '';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+// ─── Generaciones ─────────────────────────────
+function setGen(n) {
+  selectedGenerations = n;
+  document.querySelectorAll('.gen-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.gen) === n);
+  });
+}
+
+// ─── Archivos ─────────────────────────────────
+async function handleFiles(fileList) {
+  for (const file of fileList) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch('/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      pendingFiles.push({
+        name: data.name,
+        type: data.type,
+        base64: data.base64,
+        text: data.text,
+        isImage: data.type.startsWith('image/'),
+      });
+      renderFilesPreview();
+    } catch (e) {
+      console.error('Error subiendo archivo:', e);
+    }
+  }
+  document.getElementById('file-input').value = '';
+}
+
+function renderFilesPreview() {
+  const container = document.getElementById('files-preview');
+  if (!pendingFiles.length) { container.innerHTML = ''; return; }
+  container.innerHTML = '<div class="files-preview">' + pendingFiles.map((f, i) => {
+    if (f.isImage) return `<img class="img-preview" src="data:${f.type};base64,${f.base64}" title="${f.name}">
+      <button class="btn-icon" onclick="removeFile(${i})" style="position:relative;top:-8px;left:-8px;background:var(--card)">✕</button>`;
+    return `<div class="file-chip">📄 ${f.name} <span class="remove" onclick="removeFile(${i})">✕</span></div>`;
+  }).join('') + '</div>';
+}
+
+function removeFile(i) {
+  pendingFiles.splice(i, 1);
+  renderFilesPreview();
+}
+
+function clearFiles() {
+  pendingFiles = [];
+  renderFilesPreview();
+}
+
+// ─── Voz ──────────────────────────────────────
+function toggleVoice() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.');
+    return;
+  }
+
+  if (isRecording) {
+    recognition.stop();
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.lang = 'es-ES';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onstart = () => {
+    isRecording = true;
+    document.getElementById('voice-btn').classList.add('active');
+    document.getElementById('voice-transcript').textContent = '🎙 Escuchando...';
+  };
+
+  recognition.onresult = (e) => {
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    const textarea = document.getElementById('input-text');
+    if (final) {
+      textarea.value += (textarea.value ? ' ' : '') + final;
+      autoResize(textarea);
+      document.getElementById('voice-transcript').textContent = '🎙 ' + interim;
+    } else {
+      document.getElementById('voice-transcript').textContent = '🎙 ' + interim;
+    }
+  };
+
+  recognition.onend = () => {
+    isRecording = false;
+    document.getElementById('voice-btn').classList.remove('active');
+    document.getElementById('voice-transcript').textContent = '';
+  };
+
+  recognition.onerror = (e) => {
+    isRecording = false;
+    document.getElementById('voice-btn').classList.remove('active');
+    document.getElementById('voice-transcript').textContent = '';
+  };
+
+  recognition.start();
+}
+
+// ─── Helpers ──────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+// ─── Init ─────────────────────────────────────
+applyTranslations();
+fetchModels().then(() => connect());
+</script>
+
+<script>
+window.MathJax = {
+  tex: {
+    inlineMath: [['$', '$'], ['\\(', '\\)']],
+    displayMath: [['$$', '$$'], ['\\[', '\\]']],
+    processEscapes: true,
+  },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+</body>
+</html>
